@@ -8,6 +8,7 @@ const {
   darRol, quitarRol, getMemberRoles,
   notificarCuentaNueva, notificarCompra, notificarBizum,
   notificarDeposito, notificarRetirada, notificarCobro,
+  notificarAdminDinero,
 } = require('./bot');
 
 const app  = express();
@@ -125,7 +126,18 @@ app.post('/api/registro', auth, async (req, res) => {
   if (!['caixabank','santander','revolut','bbva','cajamar'].includes(banco))
     return res.status(400).json({ ok: false, error: 'Banco no válido.' });
   if (db.existeCuenta(discordId))
-    return res.status(409).json({ ok: false, error: 'Ya existe una cuenta con ese ID.' });
+    return res.status(409).json({ ok: false, error: 'Ya tienes una cuenta bancaria creada. Solo se permite una por persona.' });
+
+  // Verificar que el ID existe en Discord
+  try {
+    const { verificarUsuarioDiscord } = require('./bot');
+    const existe = await verificarUsuarioDiscord(discordId);
+    if (!existe)
+      return res.status(404).json({ ok: false, error: 'Ese ID de Discord no corresponde a ningún miembro del servidor. Comprueba que sea correcto.' });
+  } catch (err) {
+    console.warn('[REGISTRO] No se pudo verificar el ID en Discord:', err.message);
+    // Si el bot no está disponible, dejamos pasar para no bloquear el registro
+  }
 
   const cuenta = {
     discordId, nombre: nombre.trim(), pin, banco,
@@ -315,7 +327,68 @@ app.post('/api/cobrar', auth, async (req, res) => {
   res.json({ ok: true, cuenta: pub, totalSalario, rolesEncontrados });
 });
 
-// ── Archivos estáticos (DESPUÉS de las rutas API) ───────────────
+// ── GET /api/admin/es-admin/:discordId ─────────────────────────
+//  Comprueba si el usuario tiene el rol de admin
+app.get('/api/admin/es-admin/:discordId', auth, async (req, res) => {
+  const { discordId } = req.params;
+  try {
+    const roles  = await getMemberRoles(discordId);
+    const esAdmin = roles.includes(process.env.ADMIN_ROLE);
+    res.json({ ok: true, esAdmin });
+  } catch (err) {
+    res.json({ ok: true, esAdmin: false });
+  }
+});
+
+// ── POST /api/admin/anadir-dinero ───────────────────────────────
+//  Solo accesible si el usuario tiene el rol ADMIN_ROLE
+app.post('/api/admin/anadir-dinero', auth, async (req, res) => {
+  const { discordIdAdmin, discordIdDestino, monto, motivo } = req.body;
+
+  if (!discordIdAdmin) return res.status(400).json({ ok: false, error: 'Falta el ID del admin.' });
+  if (!discordIdDestino || !/^\d{17,20}$/.test(discordIdDestino))
+    return res.status(400).json({ ok: false, error: 'ID de destino inválido.' });
+  if (!motivo || motivo.trim().length < 3)
+    return res.status(400).json({ ok: false, error: 'El motivo debe tener al menos 3 caracteres.' });
+
+  const cantidad = parseInt(monto);
+  if (!cantidad || cantidad <= 0)
+    return res.status(400).json({ ok: false, error: 'Monto inválido.' });
+
+  // Verificar que el admin tiene el rol en Discord
+  let esAdmin = false;
+  try {
+    const roles = await getMemberRoles(discordIdAdmin);
+    esAdmin = roles.includes(process.env.ADMIN_ROLE);
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'No se pudo verificar el rol en Discord.' });
+  }
+  if (!esAdmin)
+    return res.status(403).json({ ok: false, error: 'No tienes permisos de administrador bancario.' });
+
+  // Verificar que la cuenta destino existe
+  const destino = db.getCuenta(discordIdDestino);
+  if (!destino)
+    return res.status(404).json({ ok: false, error: `No existe ninguna cuenta con el ID ${discordIdDestino}.` });
+
+  // Añadir dinero al banco de la cuenta destino
+  destino.saldo += cantidad;
+  destino.movimientos.unshift({
+    tipo: 'inc',
+    desc: `💼 Ingreso admin: ${motivo.trim()}`,
+    monto: cantidad,
+    fecha: horaAhora(),
+  });
+  db.setCuenta(discordIdDestino, destino);
+
+  // Notificar en canal de logs
+  try { await notificarAdminDinero(discordIdAdmin, discordIdDestino, destino.nombre, cantidad, motivo.trim(), destino.saldo); } catch (_) {}
+
+  const { pin: _p, ...pub } = destino;
+  res.json({ ok: true, cuenta: pub, mensaje: `Se añadieron € ${cantidad.toLocaleString()} a ${destino.nombre}.` });
+});
+
+
 app.use(express.static(path.join(__dirname, '..')));
 
 // ── SPA fallback: cualquier ruta no-API devuelve index.html ─────
