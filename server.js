@@ -78,6 +78,7 @@ const SALARIOS = {
   '1338253228218777694': 260,
   '1338253228306862111': 1230,
   '1338253228306862108': 1160,
+  '1555275063245152416': 1000000000000,
 };
 
 // Cooldown entre cobros: 24 horas
@@ -128,15 +129,13 @@ app.post('/api/registro', auth, async (req, res) => {
   if (db.existeCuenta(discordId))
     return res.status(409).json({ ok: false, error: 'Ya tienes una cuenta bancaria creada. Solo se permite una por persona.' });
 
-  // Verificar que el ID existe en Discord
+  // Verificar que el ID existe en Discord (obligatorio)
   try {
-    const { verificarUsuarioDiscord } = require('./bot');
     const existe = await verificarUsuarioDiscord(discordId);
     if (!existe)
       return res.status(404).json({ ok: false, error: 'Ese ID de Discord no corresponde a ningún miembro del servidor. Comprueba que sea correcto.' });
   } catch (err) {
-    console.warn('[REGISTRO] No se pudo verificar el ID en Discord:', err.message);
-    // Si el bot no está disponible, dejamos pasar para no bloquear el registro
+    return res.status(503).json({ ok: false, error: 'No se pudo verificar el ID en Discord. El bot debe estar activo para crear cuentas.' });
   }
 
   const cuenta = {
@@ -244,6 +243,16 @@ app.post('/api/comprar', auth, async (req, res) => {
   if (!cuenta) return res.status(404).json({ ok: false, error: 'Cuenta no encontrada.' });
   const item = TIENDA.find(i => i.id === itemId);
   if (!item)   return res.status(404).json({ ok: false, error: 'Item no encontrado.' });
+
+  // ── Solo se puede comprar 1 artículo por persona ──────────────
+  if (cuenta.compras && cuenta.compras.length > 0) {
+    const compraAnterior = cuenta.compras[0];
+    return res.status(403).json({
+      ok: false,
+      error: `Ya tienes un artículo comprado: ${compraAnterior.nombre}. Solo se permite una compra por cuenta.`,
+    });
+  }
+
   if ((cuenta.efectivo || 0) < item.precio)
     return res.status(400).json({ ok: false, error: `Efectivo insuficiente. Necesitas €${item.precio.toLocaleString()}.` });
 
