@@ -1,0 +1,21 @@
+{
+  "1257360239624323117": {
+    "discordId": "1257360239624323117",
+    "nombre": "manu",
+    "pin": "1234",
+    "banco": "cajamar",
+    "saldo": 1000,
+    "efectivo": 0,
+    "num4": "3082",
+    "movimientos": [
+      {
+        "tipo": "inc",
+        "desc": "Bono de bienvenida",
+        "monto": 1000,
+        "fecha": "1 oct, 21:03"
+      }
+    ],
+    "compras": [],
+    "ultimoCobro": null
+  }
+}
